@@ -1,10 +1,9 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Trilium Web Clipper (dev)",
   "version": "1.0.1",
   "description": "Save web clippings to Trilium Notes.",
   "homepage_url": "https://github.com/zadam/trilium-web-clipper",
-  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
   "icons": {
     "32": "icons/32.png",
     "48": "icons/48.png",
@@ -13,13 +12,10 @@
   "permissions": [
     "activeTab",
     "tabs",
-    "http://*/",
-    "https://*/",
-    "<all_urls>",
     "storage",
     "contextMenus"
   ],
-  "browser_action": {
+  "action": {
     "default_icon": "icons/32.png",
     "default_title": "Trilium Web Clipper",
     "default_popup": "popup/popup.html"
@@ -37,12 +33,7 @@
     }
   ],
   "background": {
-    "scripts": [
-      "lib/browser-polyfill.js",
-      "utils.js",
-      "trilium_server_facade.js",
-      "background.js"
-    ]
+    "service_worker": "background.js"
   },
   "options_ui": {
     "page": "options/options.html"
