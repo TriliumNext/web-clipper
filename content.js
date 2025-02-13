@@ -235,10 +235,10 @@ function createLink(clickAction, text, color = "lightskyblue") {
 	link.style.color = color;
 	link.appendChild(document.createTextNode(text));
 	link.addEventListener("click", () => {
-		browser.runtime.sendMessage(null, clickAction)
+		chrome.runtime.sendMessage(clickAction);
 	});
 
-	return link
+	return link;
 }
 
 async function prepareMessageResponse(message) {
@@ -248,46 +248,48 @@ async function prepareMessageResponse(message) {
 		let messageText;
 
 		if (message.noteId) {
-			messageText = document.createElement('p');
-			messageText.setAttribute("style", "padding: 0; margin: 0; font-size: larger;")
-			messageText.appendChild(document.createTextNode(message.message + " "));
-			messageText.appendChild(createLink(
-				{name: 'openNoteInTrilium', noteId: message.noteId},
-				"Open in Trilium."
-			));
+			const toastContainer = document.createElement('div');
+			toastContainer.style.display = 'flex';
+			toastContainer.style.flexDirection = 'column';
 
-			// only after saving tabs
+			const messageSpan = document.createElement('span');
+			messageSpan.appendChild(document.createTextNode(message.message));
+			toastContainer.appendChild(messageSpan);
+
+			const linkContainer = document.createElement('div');
+			linkContainer.style.marginTop = '10px';
+			linkContainer.appendChild(createLink({name: 'openNoteInTrilium', noteId: message.noteId}, 'Open in Trilium'));
+
 			if (message.tabIds) {
-				messageText.appendChild(document.createElement("br"));
-				messageText.appendChild(createLink(
-					{name: 'closeTabs', tabIds: message.tabIds},
-					"Close saved tabs.",
-					"tomato"
-				));
+				linkContainer.appendChild(document.createTextNode(' | '));
+				linkContainer.appendChild(createLink({name: 'closeTabs', tabIds: message.tabIds}, 'Close saved tabs', 'lightcoral'));
 			}
+
+			toastContainer.appendChild(linkContainer);
+
+			messageText = toastContainer;
 		}
 		else {
 			messageText = message.message;
 		}
 
-		await requireLib('/lib/toast.js');
-
-		showToast(messageText, {
-			settings: {
-				duration: 7000
-			}
-		});
+		showToast(messageText);
+		return;
 	}
-	else if (message.name === "trilium-save-selection") {
+
+	if (message.name === 'trilium-save-selection') {
+		const selection = window.getSelection();
+		const selectedText = selection.toString().trim();
+
+		if (!selectedText) {
+			showToast("No text selected");
+			return;
+		}
+
 		const container = document.createElement('div');
 
-		const selection = window.getSelection();
-
-		for (let i = 0; i < selection.rangeCount; i++) {
-			const range = selection.getRangeAt(i);
-
-			container.appendChild(range.cloneContents());
-		}
+		const selectionRange = selection.getRangeAt(0);
+		container.appendChild(selectionRange.cloneContents());
 
 		makeLinksAbsolute(container);
 
@@ -297,48 +299,47 @@ async function prepareMessageResponse(message) {
 			title: pageTitle(),
 			content: container.innerHTML,
 			images: images,
-			pageUrl: getPageLocationOrigin() + location.pathname + location.search + location.hash
+			pageUrl: document.location.href
 		};
-
 	}
-	else if (message.name === 'trilium-get-rectangle-for-screenshot') {
-		return getRectangleArea();
-	}
-	else if (message.name === "trilium-save-page") {
-		await requireLib("/lib/JSDOMParser.js");
-		await requireLib("/lib/Readability.js");
-		await requireLib("/lib/Readability-readerable.js");
 
-		const {title, body} = getReadableDocument();
-
-		makeLinksAbsolute(body);
-
-		const images = getImages(body);
-
-        var labels = {};
+	if (message.name === 'trilium-save-page') {
+		const doc = getReadableDocument();
 		const dates = getDocumentDates();
-		if (dates.publishedDate) {
-			labels['publishedDate'] = dates.publishedDate.toISOString().substring(0, 10);
-		}
-		if (dates.modifiedDate) {
-			labels['modifiedDate'] = dates.publishedDate.toISOString().substring(0, 10);
-		}
+
+		makeLinksAbsolute(doc.body);
+
+		const images = getImages(doc.body);
 
 		return {
-			title: title,
-			content: body.innerHTML,
+			title: doc.title,
+			content: doc.body.innerHTML,
 			images: images,
-			pageUrl: getPageLocationOrigin() + location.pathname + location.search,
-			clipType: 'page',
-			labels: labels
+			pageUrl: document.location.href,
+			dates: dates
 		};
 	}
-	else {
-		throw new Error('Unknown command: ' + JSON.stringify(message));
+
+	if (message.name === 'trilium-get-rectangle-for-screenshot') {
+		return await getRectangleArea();
 	}
 }
 
-browser.runtime.onMessage.addListener(prepareMessageResponse);
+// Listen for messages from the background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	prepareMessageResponse(message)
+		.then(response => {
+			if (response !== undefined) {
+				sendResponse({ success: true, data: response });
+			}
+		})
+		.catch(error => {
+			console.error('Error handling message:', error);
+			sendResponse({ success: false, error: error.message });
+		});
+	
+	return true; // Will respond asynchronously
+});
 
 const loadedLibs = [];
 
@@ -346,6 +347,7 @@ async function requireLib(libPath) {
 	if (!loadedLibs.includes(libPath)) {
 		loadedLibs.push(libPath);
 
-		await browser.runtime.sendMessage({name: 'load-script', file: libPath});
+		await chrome.runtime.sendMessage({name: 'load-script', file: libPath});
 	}
 }
+

@@ -1,11 +1,15 @@
 async function sendMessage(message) {
     try {
-        return await browser.runtime.sendMessage(message);
+        const response = await chrome.runtime.sendMessage(message);
+        if (response && response.success) {
+            return response.data;
+        } else if (response && response.error) {
+            throw new Error(response.error);
+        }
     }
     catch (e) {
-        console.log("Calling browser runtime failed:", e);
-
-        alert("Calling browser runtime failed. Refreshing page might help.");
+        console.log("Calling chrome runtime failed:", e);
+        alert("Calling chrome runtime failed. Refreshing page might help.");
     }
 }
 
@@ -15,17 +19,15 @@ const $saveWholeScreenShotButton = $("#save-whole-screenshot-button");
 const $saveWholePageButton = $("#save-whole-page-button");
 const $saveTabsButton = $("#save-tabs-button");
 
-$showOptionsButton.on("click", () => browser.runtime.openOptionsPage());
+$showOptionsButton.on("click", () => chrome.runtime.openOptionsPage());
 
 $saveCroppedScreenShotButton.on("click", () => {
     sendMessage({name: 'save-cropped-screenshot'});
-
     window.close();
 });
 
 $saveWholeScreenShotButton.on("click", () => {
     sendMessage({name: 'save-whole-screenshot'});
-
     window.close();
 });
 
@@ -42,20 +44,17 @@ $textNote.on('keypress', function (event) {
         saveLinkWithNote();
         return false;
     }
-
     return true;
 });
 
 $("#save-link-with-note-button").on("click", () => {
     $saveLinkWithNoteWrapper.show();
-
     $textNote[0].focus();
 });
 
 $("#cancel-button").on("click", () => {
     $saveLinkWithNoteWrapper.hide();
     $textNote.val("");
-
     window.close();
 });
 
@@ -90,7 +89,6 @@ async function saveLinkWithNote() {
 
     if (result) {
         $textNote.val('');
-
         window.close();
     }
 }
@@ -115,7 +113,7 @@ const $connectionStatus = $("#connection-status");
 const $needsConnection = $(".needs-connection");
 const $alreadyVisited = $("#already-visited");
 
-browser.runtime.onMessage.addListener(request => {
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.name === 'trilium-search-status') {
         const {triliumSearch} = request;
 
@@ -128,7 +126,6 @@ browser.runtime.onMessage.addListener(request => {
         }
         else if (triliumSearch.status === 'version-mismatch') {
             const whatToUpgrade = triliumSearch.extensionMajor > triliumSearch.triliumMajor ? "Trilium Notes" : "this extension";
-
             statusText = `<span style="color: orange">Trilium instance found, but it is not compatible with this extension version. Please update ${whatToUpgrade} to the latest version.</span>`;
             isConnected = true;
         }
@@ -146,35 +143,32 @@ browser.runtime.onMessage.addListener(request => {
         if (isConnected) {
             $needsConnection.removeAttr("disabled");
             $needsConnection.removeAttr("title");
-            browser.runtime.sendMessage({name: "trigger-trilium-search-note-url"});
+            chrome.runtime.sendMessage({name: "trigger-trilium-search-note-url"});
         }
         else {
             $needsConnection.attr("disabled", "disabled");
             $needsConnection.attr("title", "This action can't be performed without active connection to Trilium.");
         }
     }
-    else if (request.name == "trilium-previously-visited"){
+    else if (request.name === "trilium-previously-visited") {
         const {searchNote} = request;
-        if (searchNote.status === 'found'){
-            const a = createLink({name: 'openNoteInTrilium', noteId: searchNote.noteId},
-            "Open in Trilium.")
-            noteFound = `Already visited website!`;
+        if (searchNote.status === 'found') {
+            const a = createLink({name: 'openNoteInTrilium', noteId: searchNote.noteId}, "Open in Trilium.");
+            const noteFound = `Already visited website!`;
             $alreadyVisited.html(noteFound);
             $alreadyVisited[0].appendChild(a);
-        }else{
+        } else {
             $alreadyVisited.html('');
         }
-        
-
     }
 });
 
 const $checkConnectionButton = $("#check-connection-button");
 
 $checkConnectionButton.on("click", () => {
-    browser.runtime.sendMessage({
+    chrome.runtime.sendMessage({
         name: "trigger-trilium-search"
-    })
+    });
 });
 
-$(() => browser.runtime.sendMessage({name: "send-trilium-search-status"}));
+$(() => chrome.runtime.sendMessage({name: "send-trilium-search-status"}));

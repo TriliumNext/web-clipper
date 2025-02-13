@@ -1,43 +1,63 @@
+// Import required utilities
+importScripts('utils.js', 'trilium_server_facade.js');
+
+// Service worker activation
+self.addEventListener('activate', event => {
+	console.log('Service worker activated');
+	// Claim control immediately
+	event.waitUntil(clients.claim());
+});
+
+// Service worker installation
+self.addEventListener('install', event => {
+	console.log('Service worker installed');
+	// Skip waiting immediately
+	event.waitUntil(self.skipWaiting());
+});
+
 // Keyboard shortcuts
 chrome.commands.onCommand.addListener(async function (command) {
-    if (command == "saveSelection") {
-        await saveSelection();
-    } else if (command == "saveWholePage") {
-        await saveWholePage();
-    } else if (command == "saveTabs") {
-        await saveTabs();
-    } else if (command == "saveCroppedScreenshot") {
-        const activeTab = await getActiveTab();
-
-        await saveCroppedScreenshot(activeTab.url);
-    } else {
-        console.log("Unrecognized command", command);
-    }
+	if (command == "saveSelection") {
+		await saveSelection();
+	} else if (command == "saveWholePage") {
+		await saveWholePage();
+	} else if (command == "saveTabs") {
+		await saveTabs();
+	} else if (command == "saveCroppedScreenshot") {
+		const activeTab = await getActiveTab();
+		await saveCroppedScreenshot(activeTab.url);
+	} else {
+		console.log("Unrecognized command", command);
+	}
 });
 
 function cropImage(newArea, dataUrl) {
 	return new Promise((resolve, reject) => {
-		const img = new Image();
-
-		img.onload = function () {
-			const canvas = document.createElement('canvas');
-			canvas.width = newArea.width;
-			canvas.height = newArea.height;
-
-			const ctx = canvas.getContext('2d');
-
-			ctx.drawImage(img, newArea.x, newArea.y, newArea.width, newArea.height, 0, 0, newArea.width, newArea.height);
-
-			resolve(canvas.toDataURL());
-		};
-
-		img.src = dataUrl;
+		// Create an image bitmap first
+		fetch(dataUrl)
+			.then(response => response.blob())
+			.then(blob => createImageBitmap(blob))
+			.then(imageBitmap => {
+				const canvas = new OffscreenCanvas(newArea.width, newArea.height);
+				const ctx = canvas.getContext('2d');
+				
+				ctx.drawImage(imageBitmap, newArea.x, newArea.y, newArea.width, newArea.height, 0, 0, newArea.width, newArea.height);
+				
+				return canvas.convertToBlob();
+			})
+			.then(blob => {
+				const reader = new FileReader();
+				reader.onloadend = () => resolve(reader.result);
+				reader.onerror = reject;
+				reader.readAsDataURL(blob);
+			})
+			.catch(reject);
 	});
 }
 
 async function takeCroppedScreenshot(cropRect) {
 	const activeTab = await getActiveTab();
-	const zoom = await browser.tabs.getZoom(activeTab.id) *  window.devicePixelRatio;
+	const zoom = await chrome.tabs.getZoom(activeTab.id) * window.devicePixelRatio;
 
 	const newArea = Object.assign({}, cropRect);
 	newArea.x *= zoom;
@@ -45,84 +65,73 @@ async function takeCroppedScreenshot(cropRect) {
 	newArea.width *= zoom;
 	newArea.height *= zoom;
 
-	const dataUrl = await browser.tabs.captureVisibleTab(null, { format: 'png' });
+	const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
 
 	return await cropImage(newArea, dataUrl);
 }
 
 async function takeWholeScreenshot() {
-	// this saves only visible portion of the page
-	// workaround to save the whole page is to scroll & stitch
-	// example in https://github.com/mrcoles/full-page-screen-capture-chrome-extension
-	// see page.js and popup.js
-	return await browser.tabs.captureVisibleTab(null, { format: 'png' });
+	return await chrome.tabs.captureVisibleTab(null, { format: 'png' });
 }
 
-browser.runtime.onInstalled.addListener(() => {
+// Context menu setup
+chrome.runtime.onInstalled.addListener(() => {
 	if (isDevEnv()) {
-		browser.browserAction.setIcon({
+		chrome.action.setIcon({
 			path: 'icons/32-dev.png',
 		});
 	}
-});
 
-browser.contextMenus.create({
-	id: "trilium-save-selection",
-	title: "Save selection to Trilium",
-	contexts: ["selection"]
-});
+	// Create context menu items
+	chrome.contextMenus.create({
+		id: "trilium-save-selection",
+		title: "Save selection to Trilium",
+		contexts: ["selection"]
+	});
 
-browser.contextMenus.create({
-	id: "trilium-save-cropped-screenshot",
-	title: "Clip screenshot to Trilium",
-	contexts: ["page"]
-});
+	chrome.contextMenus.create({
+		id: "trilium-save-cropped-screenshot",
+		title: "Clip screenshot to Trilium",
+		contexts: ["page"]
+	});
 
-browser.contextMenus.create({
-	id: "trilium-save-cropped-screenshot",
-	title: "Crop screen shot to Trilium",
-	contexts: ["page"]
-});
+	chrome.contextMenus.create({
+		id: "trilium-save-whole-screenshot",
+		title: "Save whole screen shot to Trilium",
+		contexts: ["page"]
+	});
 
-browser.contextMenus.create({
-	id: "trilium-save-whole-screenshot",
-	title: "Save whole screen shot to Trilium",
-	contexts: ["page"]
-});
+	chrome.contextMenus.create({
+		id: "trilium-save-page",
+		title: "Save whole page to Trilium",
+		contexts: ["page"]
+	});
 
-browser.contextMenus.create({
-	id: "trilium-save-page",
-	title: "Save whole page to Trilium",
-	contexts: ["page"]
-});
+	chrome.contextMenus.create({
+		id: "trilium-save-link",
+		title: "Save link to Trilium",
+		contexts: ["link"]
+	});
 
-browser.contextMenus.create({
-	id: "trilium-save-link",
-	title: "Save link to Trilium",
-	contexts: ["link"]
-});
-
-browser.contextMenus.create({
-	id: "trilium-save-image",
-	title: "Save image to Trilium",
-	contexts: ["image"]
+	chrome.contextMenus.create({
+		id: "trilium-save-image",
+		title: "Save image to Trilium",
+		contexts: ["image"]
+	});
 });
 
 async function getActiveTab() {
-	const tabs = await browser.tabs.query({
+	const [tab] = await chrome.tabs.query({
 		active: true,
 		currentWindow: true
 	});
-
-	return tabs[0];
+	return tab;
 }
 
 async function getWindowTabs() {
-	const tabs = await browser.tabs.query({
+	return await chrome.tabs.query({
 		currentWindow: true
 	});
-
-	return tabs;
 }
 
 async function sendMessageToActiveTab(message) {
@@ -133,7 +142,7 @@ async function sendMessageToActiveTab(message) {
 	}
 
 	try {
-		return await browser.tabs.sendMessage(activeTab.id, message);
+		return await chrome.tabs.sendMessage(activeTab.id, message);
 	}
 	catch (e) {
 		throw e;
@@ -344,7 +353,7 @@ async function saveTabs() {
 	toast(`${tabs.length} links have been saved to Trilium.`, resp.noteId, tabIds);
 }
 
-browser.contextMenus.onClicked.addListener(async function(info, tab) {
+chrome.contextMenus.onClicked.addListener(async function(info, tab) {
 	if (info.menuItemId === 'trilium-save-selection') {
 		await saveSelection();
 	}
@@ -358,16 +367,12 @@ browser.contextMenus.onClicked.addListener(async function(info, tab) {
 		await saveImage(info.srcUrl, info.pageUrl);
 	}
 	else if (info.menuItemId === 'trilium-save-link') {
-		const link = document.createElement("a");
-		link.href = info.linkUrl;
-		// linkText might be available only in firefox
-		link.appendChild(document.createTextNode(info.linkText || info.linkUrl));
-
+		const linkHtml = `<a href="${info.linkUrl}">${info.linkText || info.linkUrl}</a>`;
 		const activeTab = await getActiveTab();
 
 		const resp = await triliumServerFacade.callService('POST', 'clippings', {
 			title: activeTab.title,
-			content: link.outerHTML,
+			content: linkHtml,
 			pageUrl: info.pageUrl
 		});
 
@@ -385,67 +390,77 @@ browser.contextMenus.onClicked.addListener(async function(info, tab) {
 	}
 });
 
-browser.runtime.onMessage.addListener(async request => {
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 	console.log("Received", request);
 
-	if (request.name === 'openNoteInTrilium') {
-		const resp = await triliumServerFacade.callService('POST', 'open/' + request.noteId);
+	const handleMessage = async () => {
+		let response;
+		
+		try {
+			if (request.name === 'openNoteInTrilium') {
+				const resp = await triliumServerFacade.callService('POST', 'open/' + request.noteId);
 
-		if (!resp) {
-			return;
-		}
+				if (resp && resp.result === 'open-in-browser') {
+					const {triliumServerUrl} = await chrome.storage.sync.get("triliumServerUrl");
 
-		// desktop app is not available so we need to open in browser
-		if (resp.result === 'open-in-browser') {
-			const {triliumServerUrl} = await browser.storage.sync.get("triliumServerUrl");
-
-			if (triliumServerUrl) {
-				const noteUrl = triliumServerUrl + '/#' + request.noteId;
-
-				console.log("Opening new tab in browser", noteUrl);
-
-				browser.tabs.create({
-					url: noteUrl
+					if (triliumServerUrl) {
+						const noteUrl = triliumServerUrl + '/#' + request.noteId;
+						console.log("Opening new tab in browser", noteUrl);
+						await chrome.tabs.create({ url: noteUrl });
+					} else {
+						console.error("triliumServerUrl not found in local storage.");
+					}
+				}
+				response = resp;
+			}
+			else if (request.name === 'closeTabs') {
+				response = await chrome.tabs.remove(request.tabIds);
+			}
+			else if (request.name === 'load-script') {
+				response = await chrome.scripting.executeScript({
+					target: { tabId: sender.tab.id },
+					files: [request.file]
 				});
 			}
-			else {
-				console.error("triliumServerUrl not found in local storage.");
+			else if (request.name === 'save-cropped-screenshot') {
+				const activeTab = await getActiveTab();
+				response = await saveCroppedScreenshot(activeTab.url);
 			}
+			else if (request.name === 'save-whole-screenshot') {
+				const activeTab = await getActiveTab();
+				response = await saveWholeScreenshot(activeTab.url);
+			}
+			else if (request.name === 'save-whole-page') {
+				response = await saveWholePage();
+			}
+			else if (request.name === 'save-link-with-note') {
+				response = await saveLinkWithNote(request.title, request.content);
+			}
+			else if (request.name === 'save-tabs') {
+				response = await saveTabs();
+			}
+			else if (request.name === 'trigger-trilium-search') {
+				response = await triliumServerFacade.triggerSearchForTrilium();
+			}
+			else if (request.name === 'send-trilium-search-status') {
+				response = await triliumServerFacade.sendTriliumSearchStatusToPopup();
+			}
+			else if (request.name === 'trigger-trilium-search-note-url') {
+				const activeTab = await getActiveTab();
+				response = await triliumServerFacade.triggerSearchNoteByUrl(activeTab.url);
+			}
+			
+			sendResponse({ success: true, data: response });
+		} catch (error) {
+			console.error('Error handling message:', error);
+			sendResponse({ success: false, error: error.message });
 		}
-	}
-	else if (request.name === 'closeTabs') {
-		return await browser.tabs.remove(request.tabIds)
-	}
-	else if (request.name === 'load-script') {
-		return await browser.tabs.executeScript({file: request.file});
-	}
-	else if (request.name === 'save-cropped-screenshot') {
-		const activeTab = await getActiveTab();
+	};
 
-		return await saveCroppedScreenshot(activeTab.url);
-	}
-	else if (request.name === 'save-whole-screenshot') {
-		const activeTab = await getActiveTab();
+	handleMessage().catch(error => {
+		console.error('Error in message handler:', error);
+		sendResponse({ success: false, error: error.message });
+	});
 
-		return await saveWholeScreenshot(activeTab.url);
-	}
-	else if (request.name === 'save-whole-page') {
-		return await saveWholePage();
-	}
-	else if (request.name === 'save-link-with-note') {
-		return await saveLinkWithNote(request.title, request.content);
-	}
-	else if (request.name === 'save-tabs') {
-		return await saveTabs();
-	}
-	else if (request.name === 'trigger-trilium-search') {
-		triliumServerFacade.triggerSearchForTrilium();
-	}
-	else if (request.name === 'send-trilium-search-status') {
-		triliumServerFacade.sendTriliumSearchStatusToPopup();
-	}
-	else if (request.name === 'trigger-trilium-search-note-url') {
-		const activeTab = await getActiveTab();
-		triliumServerFacade.triggerSearchNoteByUrl(activeTab.url);
-	}
+	return true; // Indicates we'll respond asynchronously
 });
